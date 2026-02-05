@@ -202,11 +202,11 @@ curl -X POST http://localhost:8080/v1/messages \
 
 ## 支持的模型
 
-| 模型 ID | 说明 | 是否支持
-|---------|------|
-| `claude-sonnet-4-5-20250929` | Claude Sonnet 4.5 | ✅️
-| `claude-opus-4-5-20251101` | Claude Opus 4.5 | ❌️
-| `claude-haiku-4-5-20251001` | Claude Haiku 4.5 | ✅️
+| 模型 ID | 说明 | 是否支持 |
+|---------|------|----------|
+| `claude-sonnet-4-5-20250929` | Claude Sonnet 4.5 | ✅ |
+| `claude-opus-4-5-20251101` | Claude Opus 4.5 | ❌ |
+| `claude-haiku-4-5-20251001` | Claude Haiku 4.5 | ✅ |
 
 ---
 
