@@ -142,6 +142,12 @@ export class DatabaseManager {
       // 列已存在，忽略错误
     }
 
+    try {
+      this.db.exec(`ALTER TABLE request_logs ADD COLUMN stream INTEGER`);
+    } catch (e) {
+      // 列已存在，忽略错误
+    }
+
     // 创建新索引
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_api_keys_name ON api_keys(name);
@@ -156,8 +162,8 @@ export class DatabaseManager {
     const stmt = this.db.prepare(`
       INSERT INTO request_logs (
         timestamp, account_id, account_name, model, 
-        input_tokens, output_tokens, duration_ms, success, error_message, api_key
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        input_tokens, output_tokens, duration_ms, success, error_message, api_key, stream
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -170,7 +176,8 @@ export class DatabaseManager {
       log.durationMs || 0,
       log.success ? 1 : 0,
       log.errorMessage || null,
-      log.apiKey || null
+      log.apiKey || null,
+      log.stream !== undefined ? (log.stream ? 1 : 0) : null
     );
   }
 
@@ -178,18 +185,21 @@ export class DatabaseManager {
   getRecentLogs(limit = 100, offset = 0) {
     const stmt = this.db.prepare(`
       SELECT 
-        id,
-        timestamp,
-        account_id as accountId,
-        account_name as accountName,
-        model,
-        input_tokens as inputTokens,
-        output_tokens as outputTokens,
-        duration_ms as durationMs,
-        success,
-        error_message as errorMessage
-      FROM request_logs
-      ORDER BY timestamp DESC
+        rl.id,
+        rl.timestamp,
+        rl.account_id as accountId,
+        rl.account_name as accountName,
+        rl.model,
+        rl.input_tokens as inputTokens,
+        rl.output_tokens as outputTokens,
+        rl.duration_ms as durationMs,
+        rl.success,
+        rl.error_message as errorMessage,
+        rl.stream,
+        COALESCE(ak.name, NULL) as apiKeyName
+      FROM request_logs rl
+      LEFT JOIN api_keys ak ON rl.api_key = ak.key
+      ORDER BY rl.timestamp DESC
       LIMIT ? OFFSET ?
     `);
 
@@ -617,14 +627,16 @@ export class DatabaseManager {
 
     const stmt = this.db.prepare(`
       SELECT 
-        COALESCE(api_key, '(未命名)') as apiKey,
+        COALESCE(ak.name, '(未命名)') as apiKey,
+        rl.api_key as apiKeyValue,
         COUNT(*) as count,
-        SUM(input_tokens) as inputTokens,
-        SUM(output_tokens) as outputTokens,
-        SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successCount
-      FROM request_logs
-      WHERE ${timeCondition}
-      GROUP BY api_key
+        SUM(rl.input_tokens) as inputTokens,
+        SUM(rl.output_tokens) as outputTokens,
+        SUM(CASE WHEN rl.success = 1 THEN 1 ELSE 0 END) as successCount
+      FROM request_logs rl
+      LEFT JOIN api_keys ak ON rl.api_key = ak.key
+      WHERE ${timeCondition} AND rl.api_key IS NOT NULL
+      GROUP BY rl.api_key
       ORDER BY count DESC
       LIMIT ?
     `);

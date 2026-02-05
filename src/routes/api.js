@@ -43,6 +43,9 @@ export function createApiRouter(state) {
         error: { type: 'authentication_error', message: 'Invalid API key' }
       });
     }
+    
+    // 保存 apiKey 到 req 对象，供日志记录使用
+    req.apiKey = apiKey;
     next();
   };
 
@@ -124,7 +127,9 @@ export function createApiRouter(state) {
           outputTokens: 0,
           durationMs: Date.now() - startTime,
           success: false,
-          error: error.message
+          error: error.message,
+          apiKey: req.apiKey,
+          stream: req.body.stream === true
         });
         
         // 增加账号错误计数
@@ -522,7 +527,9 @@ async function handleStreamResponse(res, response, toolNameMap, selected, state,
       inputTokens: inputTokens || 0,
       outputTokens: outputTokens,
       durationMs: Date.now() - startTime,
-      success: true
+      success: true,
+      apiKey: req.apiKey,
+      stream: true
     });
 
   } catch (error) {
@@ -535,7 +542,9 @@ async function handleStreamResponse(res, response, toolNameMap, selected, state,
       outputTokens: 0,
       durationMs: Date.now() - startTime,
       success: false,
-      errorMessage: error.message
+      errorMessage: error.message,
+      apiKey: req.apiKey,
+      stream: true
     });
     res.end();
   }
@@ -665,7 +674,9 @@ async function handleNonStreamResponse(res, response, toolNameMap, selected, sta
       inputTokens: inputTokens || 0,
       outputTokens: outputTokens,
       durationMs: Date.now() - startTime,
-      success: true
+      success: true,
+      apiKey: req.apiKey,
+      stream: false
     });
 
   } catch (error) {
@@ -678,7 +689,9 @@ async function handleNonStreamResponse(res, response, toolNameMap, selected, sta
       outputTokens: 0,
       durationMs: Date.now() - startTime,
       success: false,
-      errorMessage: error.message
+      errorMessage: error.message,
+      apiKey: req.apiKey,
+      stream: false
     });
     throw error;
   }
