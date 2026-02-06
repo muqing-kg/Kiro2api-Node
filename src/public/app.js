@@ -2,11 +2,29 @@
 function renderPageShell() {
     const rootEl = document.getElementById("app");
     if (!rootEl) return;
+
+    // 检查所有必需的依赖是否已加载
+    const requiredDeps = ['React', 'ReactDOM', 'PageShell', 'LoginContainer', 'MainPanelShell', 'ToastContainer', 'ModalsRoot'];
+    const missingDeps = requiredDeps.filter(dep => !window[dep]);
+
+    if (missingDeps.length > 0) {
+        console.warn('等待依赖加载:', missingDeps);
+        return;
+    }
+
     const root = ReactDOM.createRoot(rootEl);
     root.render(<PageShell />);
 }
 
-renderPageShell();
+// 等待所有资源加载完成后再渲染
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        // 使用 setTimeout 确保 Babel 编译完成
+        setTimeout(renderPageShell, 100);
+    });
+} else {
+    setTimeout(renderPageShell, 100);
+}
 
 const { useState, useEffect, useRef } = React;
 
