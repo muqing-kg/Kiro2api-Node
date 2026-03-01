@@ -7,3 +7,19 @@
 .animate-slideIn { animation: slideIn 0.3s ease-out; }
 .animate-slideOut { animation: slideOut 0.3s ease-out forwards; }
 .animate-scaleIn { animation: scaleIn 0.3s ease-out; }
+
+/* 批量操作栏 */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background-color: #faf5ff;
+  border-radius: 0.5rem;
+  border: 1px solid #e9d5ff;
+}
+
+/* 策略选择器 */
+.strategy-selector {
+  min-width: 120px;
+}

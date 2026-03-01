@@ -2,11 +2,12 @@ import fetch from 'node-fetch';
 import crypto from 'crypto';
 
 export class TokenManager {
-  constructor(config, credentials) {
+  constructor(config, credentials, onCredentialsChanged = null) {
     this.config = config;
     this.credentials = credentials;
     this.accessToken = credentials.accessToken || null;
     this.expiresAt = credentials.expiresAt ? new Date(credentials.expiresAt) : new Date(0);
+    this.onCredentialsChanged = onCredentialsChanged; // 凭证变更回调
   }
 
   async ensureValidToken() {
@@ -58,16 +59,31 @@ export class TokenManager {
     }
 
     const response = await fetch(tokenUrl, fetchOptions);
-    
+
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`Social Token 刷新失败: ${response.status} - ${error}`);
+      const err = new Error(`Social Token 刷新失败: ${response.status} - ${error}`);
+      err.status = response.status;
+      throw err;
     }
 
     const data = await response.json();
     this.accessToken = data.access_token;
     this.expiresAt = new Date(Date.now() + (data.expires_in || 3600) * 1000);
-    
+
+    // 如果返回了新的 refresh_token，触发回调通知 AccountPool 更新
+    if (data.refresh_token) {
+      const newRefreshToken = data.refresh_token;
+
+      // 触发凭证变更回调（由 AccountPool 负责持久化到数据库并更新内存）
+      if (this.onCredentialsChanged) {
+        this.onCredentialsChanged({
+          refreshToken: newRefreshToken,
+          credentialsUpdatedAt: new Date().toISOString()
+        });
+      }
+    }
+
     return this.accessToken;
   }
 
@@ -106,21 +122,31 @@ export class TokenManager {
     }
 
     const response = await fetch(tokenUrl, fetchOptions);
-    
+
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`IdC Token 刷新失败: ${response.status} - ${error}`);
+      const err = new Error(`IdC Token 刷新失败: ${response.status} - ${error}`);
+      err.status = response.status;
+      throw err;
     }
 
     const data = await response.json();
     this.accessToken = data.accessToken || data.access_token;
     this.expiresAt = new Date(Date.now() + (data.expiresIn || data.expires_in || 3600) * 1000);
-    
-    // 如果返回了新的 refresh_token，更新它
+
+    // 如果返回了新的 refresh_token，触发回调通知 AccountPool 更新
     if (data.refreshToken || data.refresh_token) {
-      this.credentials.refreshToken = data.refreshToken || data.refresh_token;
+      const newRefreshToken = data.refreshToken || data.refresh_token;
+
+      // 触发凭证变更回调（由 AccountPool 负责持久化到数据库并更新内存）
+      if (this.onCredentialsChanged) {
+        this.onCredentialsChanged({
+          refreshToken: newRefreshToken,
+          credentialsUpdatedAt: new Date().toISOString()
+        });
+      }
     }
-    
+
     return this.accessToken;
   }
 

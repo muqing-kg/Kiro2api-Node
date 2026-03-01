@@ -34,6 +34,7 @@ const { useState, useEffect, useRef } = React;
         let adminKey = window.adminKey;
         let selectedAccounts = new Set();
         let autoRefreshInterval = null;
+        let autoRefreshUsageInterval = null; // 自动刷新配额定时器
         let serverStartTime = null;
         let uptimeInterval = null;
 
@@ -74,6 +75,10 @@ const { useState, useEffect, useRef } = React;
                 clearInterval(autoRefreshInterval);
                 autoRefreshInterval = null;
             }
+            if (autoRefreshUsageInterval) {
+                clearInterval(autoRefreshUsageInterval);
+                autoRefreshUsageInterval = null;
+            }
             if (uptimeInterval) {
                 clearInterval(uptimeInterval);
                 uptimeInterval = null;
@@ -89,14 +94,42 @@ const { useState, useEffect, useRef } = React;
         let currentStrategy = 'round-robin';
         let currentSettingsTab = 'general';
         let autoRefreshEnabled = false;
+        let autoRefreshUsageEnabled = true; // 默认开启自动刷新配额
         let accountsTableRoot = null;
         let logsTableRoot = null;
         let currentAccountsData = [];
+        let filteredAccountsData = [];
+        let accountsFilter = { search: '', status: 'all' };
         let topNavRoot = null;
         let mainTabsRoot = null;
         let accountsToolbarRoot = null;
         let logsToolbarRoot = null;
         let settingsPanelRoot = null;
+
+        let accountsTabHeaderRoot = null;
+        function renderAccountsTabHeader() {
+            const headerContainer = document.getElementById('accounts-tab-header');
+            if (headerContainer) {
+                if (!accountsTabHeaderRoot) {
+                    accountsTabHeaderRoot = ReactDOM.createRoot(headerContainer);
+                }
+                accountsTabHeaderRoot.render(
+                    React.createElement('div', { className: 'card-header' },
+                        React.createElement('span', { className: 'card-title' }, '账号列表'),
+                        React.createElement('div', { className: 'card-actions' },
+                            React.createElement('button', {
+                                className: 'btn btn-secondary btn-sm',
+                                onClick: exportAccounts
+                            }, '导出'),
+                            React.createElement('button', {
+                                className: 'btn btn-primary btn-sm',
+                                onClick: function() { showModal('importModal'); }
+                            }, '添加账号')
+                        )
+                    )
+                );
+            }
+        }
 
         window.showMainPanel = function showMainPanel() {
             const mainPanel = document.getElementById('mainPanel');
@@ -132,6 +165,9 @@ const { useState, useEffect, useRef } = React;
             // 渲染 AccountsToolbar
             renderAccountsToolbar();
 
+            // 渲染 Accounts Tab Header
+            renderAccountsTabHeader();
+
             // 渲染 LogsToolbar
             renderLogsToolbar();
 
@@ -157,17 +193,49 @@ const { useState, useEffect, useRef } = React;
                 if (!accountsToolbarRoot) {
                     accountsToolbarRoot = ReactDOM.createRoot(toolbarContainer);
                 }
-                accountsToolbarRoot.render(<AccountsToolbar 
-                    onAdd={() => showModal('addModal')}
+                accountsToolbarRoot.render(<AccountsToolbar
                     onImport={() => showModal('importModal')}
+                    onExport={exportAccounts}
                     onRefreshAll={refreshAllUsage}
-                    onBatchDelete={batchDeleteAccounts}
-                    selectedCount={selectedAccounts.size}
                     strategy={currentStrategy}
                     onStrategyChange={setStrategy}
                     onRefresh={refresh}
+                    onFilterChange={handleFilterChange}
+                    selectedCount={selectedAccounts.size}
+                    allSelected={selectedAccounts.size > 0 && selectedAccounts.size === filteredAccountsData.length}
+                    onToggleSelectAll={toggleSelectAll}
+                    onBatchEnable={batchEnable}
+                    onBatchDisable={batchDisable}
+                    onBatchRefresh={batchRefresh}
+                    onBatchDelete={batchDelete}
                 />);
             }
+        }
+
+        function handleFilterChange(filters) {
+            accountsFilter = filters;
+            applyFilters();
+        }
+
+        function applyFilters() {
+            let filtered = [...currentAccountsData];
+
+            // 搜索过滤
+            if (accountsFilter.search) {
+                const query = accountsFilter.search.toLowerCase();
+                filtered = filtered.filter(a =>
+                    (a.email && a.email.toLowerCase().includes(query)) ||
+                    (a.name && a.name.toLowerCase().includes(query))
+                );
+            }
+
+            // 状态过滤
+            if (accountsFilter.status !== 'all') {
+                filtered = filtered.filter(a => a.status === accountsFilter.status);
+            }
+
+            filteredAccountsData = filtered;
+            renderAccountsTable();
         }
 
         function renderLogsToolbar() {
@@ -214,23 +282,35 @@ const { useState, useEffect, useRef } = React;
         }
 
         function renderAccountsTable(accounts) {
-            currentAccountsData = accounts;
+            if (arguments.length > 0) {
+                currentAccountsData = accounts;
+            }
+            const displayAccounts = filteredAccountsData;
             const tableRoot = document.getElementById('accounts-table');
             if (tableRoot) {
                 if (!accountsTableRoot) {
                     accountsTableRoot = ReactDOM.createRoot(tableRoot);
                 }
-                accountsTableRoot.render(<AccountsTable 
-                    accounts={accounts}
-                    selectedAccounts={selectedAccounts}
-                    onToggleSelect={toggleSelect}
-                    onSelectAll={toggleSelectAll}
+                accountsTableRoot.render(<AccountsTable
+                    accounts={displayAccounts}
+                    onEdit={openEditModal}
                     onRefreshUsage={refreshUsage}
-                    onEnable={enableAccount}
-                    onDisable={disableAccount}
                     onRemove={removeAccount}
+                    selectedAccounts={selectedAccounts}
+                    onToggleSelect={toggleSelectAccount}
+                    onShowDetail={showAccountDetail}
+                    onToggleEnabled={toggleAccountEnabled}
                 />);
             }
+        }
+
+        function openEditModal(account) {
+            window.editingAccount = account;
+            showModal('editModal');
+        }
+
+        async function exportAccounts() {
+            showModal('exportModal');
         }
 
         function renderLogsTable(logs) {
@@ -258,41 +338,124 @@ const { useState, useEffect, useRef } = React;
         async function loadAccounts() {
             try {
                 const accounts = await fetchApi('/api/accounts');
-                selectedAccounts.clear();
-                updateBatchDeleteBtn();
-                renderAccountsTable(accounts);
+                currentAccountsData = accounts;
+                applyFilters();
             } catch (e) { console.error(e); }
         }
 
-        function toggleSelect(id, checked) {
-            if (checked) selectedAccounts.add(id);
-            else selectedAccounts.delete(id);
-            updateBatchDeleteBtn();
-            loadAccounts();
-        }
-
-        function toggleSelectAll(checked) {
-            const accounts = window.currentAccountsData || [];
-            accounts.forEach(acc => {
-                if (checked) selectedAccounts.add(acc.id);
-                else selectedAccounts.delete(acc.id);
-            });
-            updateBatchDeleteBtn();
-            loadAccounts();
-        }
-
-        function updateBatchDeleteBtn() {
+        // 全选/取消全选
+        function toggleSelectAll() {
+            if (selectedAccounts.size === filteredAccountsData.length) {
+                selectedAccounts.clear();
+            } else {
+                selectedAccounts.clear();
+                filteredAccountsData.forEach(a => selectedAccounts.add(a.id));
+            }
+            renderAccountsTable();
             renderAccountsToolbar();
         }
 
-        async function batchDeleteAccounts() {
-            if (selectedAccounts.size === 0) return;
-            if (!confirm(`确定删除选中的 ${selectedAccounts.size} 个账号？`)) return;
+        // 切换单个账号选择
+        function toggleSelectAccount(id) {
+            if (selectedAccounts.has(id)) {
+                selectedAccounts.delete(id);
+            } else {
+                selectedAccounts.add(id);
+            }
+            renderAccountsTable();
+            renderAccountsToolbar();
+        }
+
+        // 批量启用
+        async function batchEnable() {
+            const ids = Array.from(selectedAccounts);
+            if (ids.length === 0) {
+                showToast('请先选择账号', 'warning');
+                return;
+            }
+
+            if (!confirm(`确定要启用选中的 ${ids.length} 个账号吗？`)) return;
+
             try {
-                const result = await fetchApi('/api/accounts/batch', { method: 'DELETE', body: JSON.stringify({ ids: Array.from(selectedAccounts) }) });
-                showToast(`成功删除 ${result.removed} 个账号`, 'success');
-                refresh();
-            } catch (e) { showToast('批量删除失败: ' + e.message, 'error'); }
+                const result = await accountsService.batchEnable(ids);
+                showToast(`已启用 ${result.enabled || 0} 个账号`, 'success');
+                // 保留选中状态
+                await loadAccounts();
+                renderAccountsToolbar();
+            } catch (error) {
+                showToast(`批量启用失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 批量禁用
+        async function batchDisable() {
+            const ids = Array.from(selectedAccounts);
+            if (ids.length === 0) {
+                showToast('请先选择账号', 'warning');
+                return;
+            }
+
+            if (!confirm(`确定要禁用选中的 ${ids.length} 个账号吗？`)) return;
+
+            try {
+                const result = await accountsService.batchDisable(ids);
+                showToast(`已禁用 ${result.disabled || 0} 个账号`, 'success');
+                // 保留选中状态
+                await loadAccounts();
+                renderAccountsToolbar();
+            } catch (error) {
+                showToast(`批量禁用失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 批量刷新
+        async function batchRefresh() {
+            const ids = Array.from(selectedAccounts);
+            if (ids.length === 0) {
+                showToast('请先选择账号', 'warning');
+                return;
+            }
+
+            if (!confirm(`确定要刷新选中的 ${ids.length} 个账号吗？`)) return;
+
+            try {
+                showToast('正在刷新...', 'info');
+                const result = await accountsService.batchRefresh(ids);
+                showToast(`已刷新 ${result.refreshed} 个账号`, 'success');
+                // 保留选中状态
+                await loadAccounts();
+                renderAccountsToolbar();
+            } catch (error) {
+                showToast(`批量刷新失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 批量删除
+        async function batchDelete() {
+            const ids = Array.from(selectedAccounts);
+            if (ids.length === 0) {
+                showToast('请先选择账号', 'warning');
+                return;
+            }
+
+            if (!confirm(`确定要删除选中的 ${ids.length} 个账号吗？此操作不可恢复！`)) return;
+
+            try {
+                const result = await accountsService.batchDelete(ids);
+                showToast(`已删除 ${result.removed} 个账号`, 'success');
+                // 删除操作需要清空选中状态
+                selectedAccounts.clear();
+                await loadAccounts();
+                renderAccountsToolbar();
+            } catch (error) {
+                showToast(`批量删除失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 显示账号详情
+        function showAccountDetail(account) {
+            const event = new CustomEvent('showDetailModal', { detail: { account } });
+            window.dispatchEvent(event);
         }
 
         // 分页状态
@@ -306,10 +469,47 @@ const { useState, useEffect, useRef } = React;
             catch (e) { showToast('刷新失败: ' + e.message, 'error'); }
         }
 
+        async function toggleAccountEnabled(id, currentEnabled) {
+            try {
+                const isEnabled = currentEnabled !== false;
+                if (isEnabled) {
+                    await window.accountsService.disableAccount(id);
+                    showToast('已禁用账号', 'success');
+                } else {
+                    await window.accountsService.enableAccount(id);
+                    showToast('已启用账号', 'success');
+                }
+                loadAccounts();
+            } catch (e) {
+                showToast('切换失败: ' + e.message, 'error');
+            }
+        }
+
         async function refreshAllUsage() {
             try { showToast('正在刷新...', 'info'); await fetchApi('/api/accounts/refresh-all-usage', { method: 'POST' }); loadAccounts(); showToast('刷新完成！', 'success'); }
             catch (e) { showToast('刷新失败: ' + e.message, 'error'); }
         }
+
+        function toggleAutoRefreshUsage() {
+            autoRefreshUsageEnabled = !autoRefreshUsageEnabled;
+            if (autoRefreshUsageEnabled) {
+                // 立即刷新一次
+                refreshAllUsage();
+                // 每 5 分钟自动刷新一次
+                autoRefreshUsageInterval = setInterval(() => {
+                    refreshAllUsage();
+                }, 5 * 60 * 1000);
+                showToast('已开启自动刷新配额（每5分钟）', 'success');
+            } else {
+                if (autoRefreshUsageInterval) {
+                    clearInterval(autoRefreshUsageInterval);
+                    autoRefreshUsageInterval = null;
+                }
+                showToast('已关闭自动刷新配额', 'info');
+            }
+            renderAccountsToolbar();
+        }
+
 
         async function loadLogs() {
             try {
@@ -365,6 +565,16 @@ const { useState, useEffect, useRef } = React;
             renderMainTabs();
             document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
             document.getElementById('tab-' + tab).classList.remove('hidden');
+
+            if (tab === 'accounts') {
+                // 启动自动刷新配额（如果尚未启动）
+                if (autoRefreshUsageEnabled && !autoRefreshUsageInterval) {
+                    autoRefreshUsageInterval = setInterval(() => {
+                        refreshAllUsage();
+                    }, 5 * 60 * 1000);
+                }
+            }
+
             if (tab === 'logs') {
                 loadLogs();
                 const toggle = document.getElementById('autoRefreshToggle');
@@ -404,7 +614,12 @@ const { useState, useEffect, useRef } = React;
             try {
                 const result = await fetchApi('/api/accounts/import', { method: 'POST', body: JSON.stringify({ raw_json: jsonContent }) });
                 hideModal('importModal'); document.getElementById('import-json').value = ''; document.getElementById('file-name').textContent = ''; refresh();
-                showToast(`导入完成！成功: ${result.success} 个，失败: ${result.failed} 个`, result.failed > 0 ? 'warning' : 'success');
+                const created = result.summary?.created || 0;
+                const replaced = result.summary?.replaced || 0;
+                const updated = result.summary?.updated || 0;
+                const failed = result.summary?.failed || 0;
+                const success = created + replaced + updated;
+                showToast(`导入完成！成功: ${success} 个（新建: ${created}, 替换: ${replaced}, 更新: ${updated}），失败: ${failed} 个`, failed > 0 ? 'warning' : 'success');
             } catch (e) { showToast('导入失败: ' + e.message, 'error'); }
         }
 
@@ -576,7 +791,18 @@ const { useState, useEffect, useRef } = React;
             navigator.clipboard.writeText(text).then(() => showToast('已复制到剪贴板', 'success')).catch(() => prompt('复制失败，请手动复制:', text));
         }
 
-        async function refresh() { loadStatus(); loadAccounts(); loadStrategy(); }
+        async function refresh() {
+            loadStatus();
+            loadAccounts();
+            loadStrategy();
+
+            // 启动自动刷新配额（如果尚未启动）
+            if (autoRefreshUsageEnabled && !autoRefreshUsageInterval) {
+                autoRefreshUsageInterval = setInterval(() => {
+                    refreshAllUsage();
+                }, 5 * 60 * 1000);
+            }
+        }
 
         // ========== 数据分析相关函数 ==========
         let chartInstances = {};

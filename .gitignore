@@ -4,3 +4,9 @@ data/
 /.idea/
 /logs/
 /nul
+
+# 测试和临时文件
+.playwright-mcp/
+.serena/
+*.png
+CHANGES.md

@@ -32,7 +32,9 @@ export async function checkUsageLimits(accessToken, config = {}) {
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`获取使用限制失败: ${response.status} - ${error}`);
+    const err = new Error(`获取使用限制失败: ${response.status} - ${error}`);
+    err.status = response.status;
+    throw err;
   }
 
   const data = await response.json();

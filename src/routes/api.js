@@ -117,7 +117,8 @@ export function createApiRouter(state) {
         
         // 增加账号错误计数
         const isRateLimit = error.status === 429 || error.message?.includes('rate') || error.message?.includes('limit');
-        state.accountPool.recordError(selected.id, isRateLimit);
+        const isAuthError = error.status === 401 || error.status === 403;
+        state.accountPool.recordError(selected.id, isRateLimit, isAuthError);
       }
 
       if (error instanceof KiroApiError) {
@@ -151,6 +152,11 @@ export function createApiRouter(state) {
 }
 
 function inferHttpStatus(error) {
+  // 优先使用 error.status（若存在且为有效的 HTTP 状态码）
+  if (error?.status && Number.isFinite(error.status) && error.status >= 400 && error.status < 600) {
+    return error.status;
+  }
+
   const msg = String(error?.message || '');
 
   const kiroStatusMatch = msg.match(/Kiro API 错误:\s*(\d{3})\b/);

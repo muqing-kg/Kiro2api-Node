@@ -1,0 +1,580 @@
+/* Kiro-Go 风格样式 - 紫色主题 */
+
+:root {
+    --primary-color: #7c3aed;
+    --primary-hover: #6d28d9;
+    --primary-light: #faf5ff;
+    --border-color: #e2e8f0;
+}
+
+/* 全局样式 */
+input[type="checkbox"] {
+    accent-color: var(--primary-color);
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.select-all-checkbox {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+/* 账号标签页容器 */
+.accounts-tab-shell {
+    background: #f8fafc;
+    min-height: 100%;
+}
+
+/* 账号卡片 */
+.account-card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border-left: 4px solid #7c3aed;
+    transition: all 0.2s;
+}
+
+.account-card:hover {
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.account-card.selected {
+    background-color: #faf5ff;
+    border-left-color: #7c3aed;
+}
+
+/* 账号卡片头部 - 第一行：复选框 + 邮箱 */
+.account-header-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.account-email {
+    font-size: 14px;
+    font-weight: 600;
+    color: #1f2937;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.5;
+    flex: 1;
+}
+
+/* 第二行：标签（左） + 操作按钮（右） */
+.account-header-bottom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    gap: 12px;
+}
+
+/* 账号标签 */
+.account-meta {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    align-items: center;
+}
+
+/* 操作按钮 */
+.account-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.account-actions button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    color: #4b5563;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.account-actions button:hover {
+    background: #e5e7eb;
+    border-color: #d1d5db;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+}
+
+.account-actions button:active {
+    transform: translateY(0);
+    box-shadow: none;
+}
+
+.account-actions button svg {
+    flex-shrink: 0;
+}
+
+.account-actions button[style*="color: rgb(239, 68, 68)"] {
+    color: #ef4444;
+}
+
+.account-actions button[style*="color: rgb(239, 68, 68)"]:hover {
+    background: #fef2f2;
+    border-color: #fecaca;
+}
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.badge-pro {
+    background: #3b82f6;
+    color: white;
+}
+
+.badge-proplus {
+    background: #8b5cf6;
+    color: white;
+}
+
+.badge-power {
+    background: #f59e0b;
+    color: white;
+}
+
+.badge-free {
+    background: #6b7280;
+    color: white;
+}
+
+.badge-trial {
+    background: #10b981;
+    color: white;
+}
+
+.badge-info {
+    background: #e5e7eb;
+    color: #4b5563;
+}
+
+.badge-status-enabled {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.badge-status-disabled {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.badge-status-banned {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+/* 使用进度条 */
+.account-usage {
+    margin-bottom: 10px;
+}
+
+.usage-label {
+    font-size: 11px;
+    color: #6b7280;
+    margin-bottom: 4px;
+}
+
+.usage-bar {
+    height: 6px;
+    background: #e2e8f0;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 4px;
+}
+
+.usage-fill {
+    height: 100%;
+    background: #7c3aed;
+    border-radius: 3px;
+    transition: width 0.3s;
+}
+
+.usage-fill.high {
+    background: #f59e0b;
+}
+
+.usage-fill.critical {
+    background: #ef4444;
+}
+
+.usage-text {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #6b7280;
+}
+
+/* 账号统计 */
+.account-stats {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid #e5e7eb;
+}
+
+.account-stat {
+    text-align: center;
+}
+
+.account-stat-value {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1f2937;
+    margin-bottom: 2px;
+}
+
+.account-stat-label {
+    font-size: 10px;
+    color: #6b7280;
+}
+
+.account-stat select {
+    width: 100%;
+    padding: 4px;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    font-size: 12px;
+    background: white;
+    cursor: pointer;
+}
+
+.account-stat select:focus {
+    outline: none;
+    border-color: #7c3aed;
+    box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.1);
+}
+
+/* 统计卡片 */
+.stat-card {
+    background: white;
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border: 1px solid #e5e7eb;
+}
+
+.stat-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: #7c3aed;
+    margin-bottom: 4px;
+}
+
+.stat-label {
+    font-size: 13px;
+    color: #6b7280;
+    font-weight: 500;
+}
+
+/* 统计网格 - 响应式 */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+@media (min-width: 768px) {
+    .stats-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+@media (min-width: 1024px) {
+    .stats-grid {
+        grid-template-columns: repeat(6, 1fr);
+    }
+}
+
+/* 工具栏 */
+.toolbar-container {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 0 20px 12px;
+    flex-wrap: wrap;
+}
+
+.toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.toolbar-right {
+    margin-left: auto;
+    display: flex;
+    gap: 6px;
+}
+
+.toolbar-divider {
+    height: 16px;
+    width: 1px;
+    background: #e2e8f0;
+}
+
+.select-all-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #4b5563;
+}
+
+.batch-operations {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.batch-count {
+    font-size: 12px;
+    color: #7c3aed;
+    font-weight: 600;
+}
+
+.batch-btn {
+    padding: 6px 12px;
+    border: none;
+    background: transparent;
+    color: #4b5563;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: all 0.2s;
+}
+
+.batch-btn:hover {
+    background: #f3f4f6;
+}
+
+.batch-btn.enable:hover {
+    color: #10b981;
+    background: #d1fae5;
+}
+
+.batch-btn.disable:hover {
+    color: #6b7280;
+    background: #f3f4f6;
+}
+
+.batch-btn.refresh:hover {
+    color: #3b82f6;
+    background: #dbeafe;
+}
+
+.batch-btn.delete:hover {
+    color: #ef4444;
+    background: #fee2e2;
+}
+
+/* 搜索框 */
+.search-input {
+    width: 260px;
+    padding: 8px 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.search-input:focus {
+    outline: none;
+    border-color: #7c3aed;
+    box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.1);
+}
+
+/* 筛选下拉框 */
+.filter-select {
+    min-width: 120px;
+    padding: 8px 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    font-size: 13px;
+    background: white;
+    cursor: pointer;
+}
+
+.filter-select:focus {
+    outline: none;
+    border-color: #7c3aed;
+    box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.1);
+}
+
+/* 隐私模式开关 */
+.privacy-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.privacy-toggle span {
+    font-size: 13px;
+    font-weight: 500;
+    color: #4b5563;
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #cbd5e1;
+    transition: 0.3s;
+    border-radius: 24px;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+input:checked + .slider {
+    background-color: #7c3aed;
+}
+
+input:checked + .slider:before {
+    transform: translateX(20px);
+}
+
+/* 卡片头部 */
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.card-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1f2937;
+}
+
+.card-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+/* 按钮样式 */
+.btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+}
+
+.btn-primary {
+    background: #7c3aed;
+    color: white;
+}
+
+.btn-primary:hover {
+    background: #6d28d9;
+}
+
+.btn-secondary {
+    background: #f3f4f6;
+    color: #4b5563;
+}
+
+.btn-secondary:hover {
+    background: #e5e7eb;
+}
+
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+/* 账号网格 */
+.accounts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 12px;
+    padding: 0 20px 20px;
+}
+
+/* 空状态 */
+.empty-state {
+    text-align: center;
+    padding: 48px 0;
+    color: #9ca3af;
+}
+
+.empty-icon {
+    font-size: 40px;
+    margin-bottom: 12px;
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+    .account-stats {
+        grid-template-columns: repeat(3, 1fr);
+    }
+
+    .toolbar-container {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .toolbar-right {
+        margin-left: 0;
+    }
+
+    .search-input {
+        width: 100%;
+    }
+}

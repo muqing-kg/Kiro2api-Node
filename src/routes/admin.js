@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import crypto from 'crypto';
+import { processImport } from '../utils/accountImport.js';
+import { exportAccounts } from '../utils/accountExport.js';
 
 // 生成 API 密钥
 function generateApiKey(prefix = 'sk') {
@@ -98,54 +100,232 @@ export function createAdminRouter(state) {
     }
   });
 
-  // POST /api/accounts/import
+  // POST /api/accounts/import（增强版，支持 3 格式）
   router.post('/accounts/import', async (req, res) => {
     try {
-      const { raw_json, name } = req.body;
-      const parsed = JSON.parse(raw_json);
-      
-      // 支持数组格式（批量导入）
-      const accounts = Array.isArray(parsed) ? parsed : [parsed];
-      const results = [];
-      
-      for (const raw of accounts) {
-        try {
-          const authMethod = (raw.clientId && raw.clientSecret) ? 'idc' : 'social';
-          const accountName = raw.label || raw.email || name || '导入的账号';
-          
-          const id = await state.accountPool.addAccount({
-            name: accountName,
-            credentials: {
-              refreshToken: raw.refreshToken,
-              authMethod,
-              clientId: raw.clientId,
-              clientSecret: raw.clientSecret,
-              region: raw.region,
-              machineId: raw.machineId
-            }
-          }, true); // skipValidation = true，导入时跳过验证
-          results.push({ success: true, id, name: accountName });
-        } catch (e) {
-          results.push({ success: false, name: raw.label || raw.email, error: e.message });
-        }
+      // 兼容旧格式：{ raw_json: "..." }
+      let payload, format, options;
+
+      if (req.body.raw_json) {
+        // 旧格式兼容
+        payload = JSON.parse(req.body.raw_json);
+        format = 'auto';
+        options = {
+          dryRun: false,
+          validateToken: false,
+          onDuplicate: 'skip'
+        };
+      } else if (req.body.accounts) {
+        // 前端 accountsService.js 格式兼容
+        payload = req.body.accounts;
+        format = 'auto';
+        options = {
+          dryRun: false,
+          validateToken: false,
+          onDuplicate: 'skip'
+        };
+      } else {
+        // 新格式：{ payload, format, options }
+        payload = req.body.payload;
+        format = req.body.format || 'auto';
+        options = {
+          dryRun: req.body.options?.dryRun || false,
+          validateToken: req.body.options?.validateToken || false,
+          onDuplicate: req.body.options?.onDuplicate || 'skip'
+        };
       }
-      
-      const successCount = results.filter(r => r.success).length;
-      res.status(201).json({ 
-        total: accounts.length, 
-        success: successCount, 
-        failed: accounts.length - successCount,
-        results 
-      });
+
+      // 检查数据库是否可用
+      if (!state.dbManager) {
+        return res.status(503).json({ error: '数据库不可用，无法导入账号' });
+      }
+
+      const results = await processImport(
+        payload,
+        format,
+        options,
+        state.accountPool,
+        state.dbManager
+      );
+
+      res.status(201).json(results);
     } catch (error) {
       res.status(400).json({ error: `导入失败: ${error.message}` });
     }
   });
 
+  // GET /api/accounts/export
+  router.get('/accounts/export', async (req, res) => {
+    try {
+      const format = req.query.format || 'standard_v2';
+      const sensitive = req.query.sensitive || 'masked';
+      const ids = req.query.ids ? req.query.ids.split(',') : null;
+      const status = req.query.status || null;
+      const provider = req.query.provider || null;
+
+      // 安全检查：full 导出需要额外确认
+      if (sensitive === 'full' && req.query.confirm !== 'true') {
+        return res.status(403).json({
+          error: '导出完整凭证需要确认参数 confirm=true'
+        });
+      }
+
+      // 检查数据库是否可用
+      if (!state.dbManager) {
+        return res.status(503).json({ error: '数据库不可用，无法导出账号' });
+      }
+
+      // 从数据库获取账号
+      const filters = { ids, status, provider };
+      const accounts = state.dbManager.getAccountsForExport(filters);
+
+      // 导出
+      const exported = exportAccounts(accounts, format, sensitive);
+
+      // 设置响应头
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Pragma', 'no-cache');
+
+      res.json(exported);
+    } catch (error) {
+      res.status(500).json({ error: `导出失败: ${error.message}` });
+    }
+  });
+
+  // PATCH /api/accounts/:id（编辑账号）
+  router.patch('/accounts/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = {};
+
+      // 允许更新的字段
+      if (req.body.name !== undefined) updates.name = req.body.name;
+
+      // providerSource 枚举校验
+      if (req.body.providerSource !== undefined) {
+        const validProviderSources = ['builder-id', 'social', 'unknown'];
+        if (!validProviderSources.includes(req.body.providerSource)) {
+          return res.status(400).json({ error: `providerSource 必须是以下值之一: ${validProviderSources.join(', ')}` });
+        }
+        updates.providerSource = req.body.providerSource;
+      }
+
+      // authMethod 枚举校验
+      if (req.body.authMethod !== undefined) {
+        const validAuthMethods = ['idc', 'social'];
+        if (!validAuthMethods.includes(req.body.authMethod)) {
+          return res.status(400).json({ error: `authMethod 必须是以下值之一: ${validAuthMethods.join(', ')}` });
+        }
+        updates.authMethod = req.body.authMethod;
+      }
+
+      if (req.body.refreshToken !== undefined) updates.refreshToken = req.body.refreshToken;
+      if (req.body.clientId !== undefined) updates.clientId = req.body.clientId;
+      if (req.body.clientSecret !== undefined) updates.clientSecret = req.body.clientSecret;
+      if (req.body.region !== undefined) updates.region = req.body.region;
+      if (req.body.machineId !== undefined) updates.machineId = req.body.machineId;
+
+      // IDC 跨字段校验：authMethod=idc 时必须提供 clientId 和 clientSecret
+      const targetAuthMethod = updates.authMethod || (await state.accountPool.accounts.get(id))?.authMethod;
+      if (targetAuthMethod === 'idc') {
+        const account = state.accountPool.accounts.get(id);
+        const finalClientId = updates.clientId !== undefined ? updates.clientId : account?.credentials?.clientId;
+        const finalClientSecret = updates.clientSecret !== undefined ? updates.clientSecret : account?.credentials?.clientSecret;
+
+        if (!finalClientId || !finalClientSecret) {
+          return res.status(400).json({ error: 'IDC 认证方式需要同时提供 clientId 和 clientSecret' });
+        }
+      }
+
+      // status 枚举校验
+      if (req.body.status !== undefined) {
+        const validStatuses = ['active', 'disabled', 'cooldown', 'invalid'];
+        if (!validStatuses.includes(req.body.status)) {
+          return res.status(400).json({ error: `status 必须是以下值之一: ${validStatuses.join(', ')}` });
+        }
+        updates.status = req.body.status;
+      }
+
+      const success = await state.accountPool.updateAccount(id, updates);
+
+      if (!success) {
+        return res.status(404).json({ error: '账号不存在' });
+      }
+
+      // 返回更新后的账号
+      const account = state.accountPool.listAccounts().find(a => a.id === id);
+
+      res.json({
+        id,
+        updated: true,
+        account
+      });
+    } catch (error) {
+      res.status(400).json({ error: `更新失败: ${error.message}` });
+    }
+  });
+
+  // ============ 批量操作 API（必须在 :id 路由之前注册）============
+
+  // DELETE /api/accounts/batch - 批量删除账号
+  router.delete('/accounts/batch', async (req, res) => {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: '请提供要删除的账号 ID 列表' });
+    }
+    const results = await state.accountPool.removeAccounts(ids);
+    res.json(results);
+  });
+
+  // POST /api/accounts/batch/enable - 批量启用账号
+  router.post('/accounts/batch/enable', async (req, res) => {
+    try {
+      const { ids } = req.body;
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: '请提供要启用的账号 ID 列表' });
+      }
+      const results = await state.accountPool.enableAccounts(ids);
+      res.json(results);
+    } catch (error) {
+      res.status(500).json({ error: `批量启用失败: ${error.message}` });
+    }
+  });
+
+  // POST /api/accounts/batch/disable - 批量禁用账号
+  router.post('/accounts/batch/disable', async (req, res) => {
+    try {
+      const { ids } = req.body;
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: '请提供要禁用的账号 ID 列表' });
+      }
+      const results = await state.accountPool.disableAccounts(ids);
+      res.json(results);
+    } catch (error) {
+      res.status(500).json({ error: `批量禁用失败: ${error.message}` });
+    }
+  });
+
+  // POST /api/accounts/batch/refresh - 批量刷新账号
+  router.post('/accounts/batch/refresh', async (req, res) => {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: '请提供要刷新的账号 ID 列表' });
+    }
+    try {
+      const results = await state.accountPool.refreshAccounts(ids);
+      res.json(results);
+    } catch (error) {
+      res.status(500).json({ error: `批量刷新失败: ${error.message}` });
+    }
+  });
+
+  // ============ 单个账号操作 API ============
+
   // DELETE /api/accounts/:id
   router.delete('/accounts/:id', async (req, res) => {
     const removed = await state.accountPool.removeAccount(req.params.id);
-    res.status(removed ? 204 : 404).end();
+    res.status(removed.success ? 204 : 404).end();
   });
 
   // POST /api/accounts/:id/enable
@@ -226,16 +406,6 @@ export function createAdminRouter(state) {
   // GET /api/logs/stats
   router.get('/logs/stats', (req, res) => {
     res.json(state.accountPool.getLogStats());
-  });
-
-  // DELETE /api/accounts/batch - 批量删除账号
-  router.delete('/accounts/batch', async (req, res) => {
-    const { ids } = req.body;
-    if (!ids || !Array.isArray(ids) || ids.length === 0) {
-      return res.status(400).json({ error: '请提供要删除的账号 ID 列表' });
-    }
-    const results = await state.accountPool.removeAccounts(ids);
-    res.json(results);
   });
 
   // ============ 设置管理 API ============

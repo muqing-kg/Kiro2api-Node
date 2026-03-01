@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 
 export class DatabaseManager {
   constructor(config) {
@@ -237,6 +238,197 @@ export class DatabaseManager {
         // 忽略迁移错误
       }
     }
+
+    // 账号管理增强：添加新字段
+    const accountColumns = [
+      { name: 'provider_source', type: 'TEXT NOT NULL DEFAULT \'unknown\'' },
+      { name: 'auth_method', type: 'TEXT NOT NULL DEFAULT \'social\'' },
+      { name: 'region', type: 'TEXT' },
+      { name: 'machine_id', type: 'TEXT' },
+      { name: 'email', type: 'TEXT' },
+      { name: 'subscription_level', type: 'TEXT' },
+      { name: 'import_format', type: 'TEXT' },
+      { name: 'import_batch_id', type: 'TEXT' },
+      { name: 'token_fingerprint', type: 'TEXT' },
+      { name: 'credentials_version', type: 'INTEGER NOT NULL DEFAULT 1' },
+      { name: 'credentials_updated_at', type: 'TEXT' },
+      { name: 'last_validated_at', type: 'TEXT' }
+    ];
+
+    for (const col of accountColumns) {
+      if (!this._columnExists('accounts', col.name)) {
+        this.db.exec(`ALTER TABLE accounts ADD COLUMN ${col.name} ${col.type}`);
+      }
+    }
+
+    // 创建账号增强索引（先处理重复指纹）
+    // 双集合去重：existingFingerprints 装已存在的非空指纹，newFingerprints 装回填时新写入的指纹
+    let existingFingerprints = new Set();
+    let newFingerprints = new Set();
+
+    try {
+      // 收集所有已存在的非空指纹
+      const existingRecords = this.db.prepare(`
+        SELECT token_fingerprint FROM accounts WHERE token_fingerprint IS NOT NULL
+      `).all();
+
+      for (const record of existingRecords) {
+        existingFingerprints.add(record.token_fingerprint);
+      }
+
+      // 检查重复的 token_fingerprint
+      const duplicates = this.db.prepare(`
+        SELECT token_fingerprint, COUNT(*) as count
+        FROM accounts
+        WHERE token_fingerprint IS NOT NULL
+        GROUP BY token_fingerprint
+        HAVING count > 1
+      `).all();
+
+      if (duplicates.length > 0) {
+        console.warn(`⚠️  检测到 ${duplicates.length} 个重复的 token_fingerprint`);
+
+        // 将重复的指纹置空（保留最新的记录）- 使用参数化语句
+        const updateStmt = this.db.prepare(`
+          UPDATE accounts
+          SET token_fingerprint = NULL
+          WHERE token_fingerprint = ?
+          AND rowid NOT IN (
+            SELECT MAX(rowid)
+            FROM accounts
+            WHERE token_fingerprint = ?
+          )
+        `);
+
+        for (const dup of duplicates) {
+          updateStmt.run(dup.token_fingerprint, dup.token_fingerprint);
+        }
+        console.log(`✓ 已将重复指纹置空，保留最新记录`);
+      }
+    } catch (e) {
+      console.warn('处理重复 token_fingerprint 失败:', e.message);
+    }
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_accounts_provider_source ON accounts(provider_source);
+      CREATE INDEX IF NOT EXISTS idx_accounts_auth_method ON accounts(auth_method);
+      CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email);
+      CREATE INDEX IF NOT EXISTS idx_accounts_subscription_level ON accounts(subscription_level);
+      CREATE INDEX IF NOT EXISTS idx_accounts_import_batch ON accounts(import_batch_id);
+    `);
+
+    // 数据回填：从现有 JSON 字段提取数据（仅对未设置的字段）
+    try {
+      // 从 credentials 提取 auth_method（仅更新默认值）
+      this.db.exec(`
+        UPDATE accounts
+        SET auth_method = COALESCE(
+          json_extract(credentials, '$.authMethod'),
+          json_extract(credentials, '$.auth_method'),
+          'social'
+        )
+        WHERE auth_method = 'social' AND credentials IS NOT NULL
+      `);
+
+      // 从 credentials 提取 region 和 machine_id（仅更新 NULL 值）
+      this.db.exec(`
+        UPDATE accounts
+        SET region = COALESCE(region, json_extract(credentials, '$.region')),
+            machine_id = COALESCE(machine_id,
+              json_extract(credentials, '$.machineId'),
+              json_extract(credentials, '$.machine_id'))
+        WHERE credentials IS NOT NULL AND (region IS NULL OR machine_id IS NULL)
+      `);
+
+      // 从 usage 提取 email 和 subscription_level（仅更新 NULL 值）
+      this.db.exec(`
+        UPDATE accounts
+        SET email = COALESCE(email, json_extract(usage, '$.userEmail')),
+            subscription_level = COALESCE(subscription_level, json_extract(usage, '$.subscriptionType'))
+        WHERE usage IS NOT NULL AND (email IS NULL OR subscription_level IS NULL)
+      `);
+
+      // 根据 auth_method 推断 provider_source（仅更新 unknown 值）
+      this.db.exec(`
+        UPDATE accounts
+        SET provider_source = CASE
+          WHEN provider_source IS NOT NULL AND provider_source <> 'unknown' THEN provider_source
+          WHEN auth_method = 'idc' THEN 'builder-id'
+          ELSE 'social'
+        END
+        WHERE provider_source = 'unknown'
+      `);
+
+      // 回填 token_fingerprint（仅对未设置的历史账号，使用双集合去重）
+      const accountsNeedFingerprint = this.db.prepare(`
+        SELECT id, credentials FROM accounts WHERE token_fingerprint IS NULL AND credentials IS NOT NULL
+      `).all();
+
+      if (accountsNeedFingerprint.length > 0) {
+        const updateStmt = this.db.prepare('UPDATE accounts SET token_fingerprint = ? WHERE id = ?');
+        const updateMany = this.db.transaction((accounts) => {
+          for (const acc of accounts) {
+            try {
+              const credentials = typeof acc.credentials === 'string' ? JSON.parse(acc.credentials) : acc.credentials;
+              const refreshToken = credentials?.refreshToken;
+              if (refreshToken) {
+                const fingerprint = crypto.createHash('sha256').update(refreshToken).digest('hex');
+                // 双集合去重：检查是否已存在或本次已写入
+                if (!existingFingerprints.has(fingerprint) && !newFingerprints.has(fingerprint)) {
+                  updateStmt.run(fingerprint, acc.id);
+                  newFingerprints.add(fingerprint); // 记录本次写入的指纹
+                } else {
+                  console.warn(`⚠️  跳过重复指纹账号 ${acc.id}`);
+                }
+              }
+            } catch (e) {
+              console.error(`回填账号 ${acc.id} 指纹失败:`, e.message);
+            }
+          }
+        });
+        updateMany(accountsNeedFingerprint);
+        console.log(`✓ 回填了 ${accountsNeedFingerprint.length} 个历史账号的 token_fingerprint（跳过 ${accountsNeedFingerprint.length - newFingerprints.size} 个重复）`);
+      }
+
+      // 回填 machine_id（仅对未设置的账号）
+      const accountsNeedMachineId = this.db.prepare(`
+        SELECT id, credentials FROM accounts WHERE machine_id IS NULL AND credentials IS NOT NULL
+      `).all();
+
+      if (accountsNeedMachineId.length > 0) {
+        const updateMachineIdStmt = this.db.prepare('UPDATE accounts SET machine_id = ?, credentials = ? WHERE id = ?');
+        const updateMachineIdMany = this.db.transaction((accounts) => {
+          for (const acc of accounts) {
+            try {
+              const credentials = typeof acc.credentials === 'string' ? JSON.parse(acc.credentials) : acc.credentials;
+              // 生成新的机器码
+              const machineId = crypto.randomBytes(32).toString('hex');
+              // 更新 credentials 中的 machineId
+              credentials.machineId = machineId;
+              updateMachineIdStmt.run(machineId, JSON.stringify(credentials), acc.id);
+            } catch (e) {
+              console.error(`回填账号 ${acc.id} 机器码失败:`, e.message);
+            }
+          }
+        });
+        updateMachineIdMany(accountsNeedMachineId);
+        console.log(`✓ 回填了 ${accountsNeedMachineId.length} 个历史账号的 machine_id`);
+      }
+    } catch (e) {
+      console.error('账号数据回填失败:', e.message);
+    }
+
+    // 在回填完成后创建唯一索引
+    try {
+      this.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_token_fingerprint_uniq ON accounts(token_fingerprint) WHERE token_fingerprint IS NOT NULL;
+      `);
+      console.log('✓ 创建 token_fingerprint 唯一索引成功');
+    } catch (e) {
+      console.error('✗ 创建 token_fingerprint 唯一索引失败:', e.message);
+      console.error('⚠️  数据库初始化失败，去重功能将不可用');
+      throw new Error(`数据库初始化失败: 无法创建 token_fingerprint 唯一索引 - ${e.message}`);
+    }
   }
 
   // 插入请求日志
@@ -293,12 +485,12 @@ export class DatabaseManager {
   // 获取日志统计信息
   getLogStats() {
     const stmt = this.db.prepare(`
-      SELECT 
+      SELECT
         COUNT(*) as totalLogs,
         SUM(input_tokens) as totalInputTokens,
         SUM(output_tokens) as totalOutputTokens,
         SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successCount,
-        SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failureCount
+        SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failedCount
       FROM request_logs
     `);
 
@@ -511,11 +703,24 @@ export class DatabaseManager {
         name,
         credentials,
         status,
+        CASE WHEN status = 'active' THEN 1 ELSE 0 END as enabled,
         request_count as requestCount,
         error_count as errorCount,
         created_at as createdAt,
         last_used_at as lastUsedAt,
-        usage
+        usage,
+        provider_source as providerSource,
+        auth_method as authMethod,
+        region,
+        machine_id as machineId,
+        email,
+        subscription_level as subscriptionLevel,
+        import_format as importFormat,
+        import_batch_id as importBatchId,
+        token_fingerprint as tokenFingerprint,
+        credentials_version as credentialsVersion,
+        credentials_updated_at as credentialsUpdatedAt,
+        last_validated_at as lastValidatedAt
       FROM accounts
       ORDER BY created_at DESC
     `);
@@ -530,11 +735,24 @@ export class DatabaseManager {
         name,
         credentials,
         status,
+        CASE WHEN status = 'active' THEN 1 ELSE 0 END as enabled,
         request_count as requestCount,
         error_count as errorCount,
         created_at as createdAt,
         last_used_at as lastUsedAt,
-        usage
+        usage,
+        provider_source as providerSource,
+        auth_method as authMethod,
+        region,
+        machine_id as machineId,
+        email,
+        subscription_level as subscriptionLevel,
+        import_format as importFormat,
+        import_batch_id as importBatchId,
+        token_fingerprint as tokenFingerprint,
+        credentials_version as credentialsVersion,
+        credentials_updated_at as credentialsUpdatedAt,
+        last_validated_at as lastValidatedAt
       FROM accounts
       WHERE id = ?
     `);
@@ -546,8 +764,11 @@ export class DatabaseManager {
     const stmt = this.db.prepare(`
       INSERT INTO accounts (
         id, name, credentials, status, request_count, error_count,
-        created_at, last_used_at, usage
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, last_used_at, usage,
+        provider_source, auth_method, region, machine_id,
+        email, subscription_level, import_format, import_batch_id,
+        token_fingerprint, credentials_version, credentials_updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -559,7 +780,18 @@ export class DatabaseManager {
       account.errorCount || 0,
       account.createdAt,
       account.lastUsedAt || null,
-      account.usage ? JSON.stringify(account.usage) : null
+      account.usage ? JSON.stringify(account.usage) : null,
+      account.providerSource || 'unknown',
+      account.authMethod || 'social',
+      account.region || null,
+      account.machineId || null,
+      account.email || null,
+      account.subscriptionLevel || null,
+      account.importFormat || null,
+      account.importBatchId || null,
+      account.tokenFingerprint || null,
+      account.credentialsVersion || 1,
+      account.credentialsUpdatedAt || null
     );
   }
 
@@ -568,6 +800,14 @@ export class DatabaseManager {
     const fields = [];
     const values = [];
 
+    if (updates.name !== undefined) {
+      fields.push('name = ?');
+      values.push(updates.name);
+    }
+    if (updates.credentials !== undefined) {
+      fields.push('credentials = ?');
+      values.push(JSON.stringify(updates.credentials));
+    }
     if (updates.status !== undefined) {
       fields.push('status = ?');
       values.push(updates.status);
@@ -588,6 +828,46 @@ export class DatabaseManager {
       fields.push('usage = ?');
       values.push(updates.usage ? JSON.stringify(updates.usage) : null);
     }
+    if (updates.providerSource !== undefined) {
+      fields.push('provider_source = ?');
+      values.push(updates.providerSource);
+    }
+    if (updates.authMethod !== undefined) {
+      fields.push('auth_method = ?');
+      values.push(updates.authMethod);
+    }
+    if (updates.region !== undefined) {
+      fields.push('region = ?');
+      values.push(updates.region);
+    }
+    if (updates.machineId !== undefined) {
+      fields.push('machine_id = ?');
+      values.push(updates.machineId);
+    }
+    if (updates.email !== undefined) {
+      fields.push('email = ?');
+      values.push(updates.email);
+    }
+    if (updates.subscriptionLevel !== undefined) {
+      fields.push('subscription_level = ?');
+      values.push(updates.subscriptionLevel);
+    }
+    if (updates.tokenFingerprint !== undefined) {
+      fields.push('token_fingerprint = ?');
+      values.push(updates.tokenFingerprint);
+    }
+    if (updates.credentialsVersion !== undefined) {
+      fields.push('credentials_version = ?');
+      values.push(updates.credentialsVersion);
+    }
+    if (updates.credentialsUpdatedAt !== undefined) {
+      fields.push('credentials_updated_at = ?');
+      values.push(updates.credentialsUpdatedAt);
+    }
+    if (updates.lastValidatedAt !== undefined) {
+      fields.push('last_validated_at = ?');
+      values.push(updates.lastValidatedAt);
+    }
 
     if (fields.length === 0) return;
 
@@ -607,6 +887,25 @@ export class DatabaseManager {
     return result.changes > 0;
   }
 
+  // 原子替换账号：在单个事务中完成"置空旧指纹 → 插入新账号 → 删除旧账号"
+  replaceAccountAtomic(oldId, newAccountData) {
+    const replaceTransaction = this.db.transaction(() => {
+      // 1. 置空旧账号指纹
+      this.db.prepare('UPDATE accounts SET token_fingerprint = NULL WHERE id = ?').run(oldId);
+
+      // 2. 插入新账号
+      this.insertAccount(newAccountData);
+
+      // 3. 删除旧账号
+      const deleteResult = this.db.prepare('DELETE FROM accounts WHERE id = ?').run(oldId);
+      if (deleteResult.changes === 0) {
+        throw new Error(`无法删除旧账号 ${oldId}`);
+      }
+    });
+
+    replaceTransaction();
+  }
+
   // 批量删除账号
   deleteAccounts(ids) {
     const stmt = this.db.prepare(`
@@ -624,6 +923,21 @@ export class DatabaseManager {
     });
 
     return deleteMany(ids);
+  }
+
+  // 批量更新账号状态
+  updateAccountStatusBatch(ids, status) {
+    const stmt = this.db.prepare('UPDATE accounts SET status = ? WHERE id = ?');
+    const updateMany = this.db.transaction((ids, status) => {
+      let updated = 0;
+      for (const id of ids) {
+        const result = stmt.run(status, id);
+        updated += result.changes;
+      }
+      return updated;
+    });
+
+    return updateMany(ids, status);
   }
 
   // ============ 设置管理方法 ============
@@ -1036,6 +1350,50 @@ export class DatabaseManager {
       }
     }
     return null;
+  }
+
+  // 按 token_fingerprint 查找账号（去重用）
+  getAccountByFingerprint(fingerprint) {
+    const stmt = this.db.prepare(`
+      SELECT id, name, email FROM accounts WHERE token_fingerprint = ?
+    `);
+    return stmt.get(fingerprint);
+  }
+
+  // 导出账号（支持筛选）
+  getAccountsForExport(filters = {}) {
+    let conditions = [];
+    let params = [];
+
+    if (filters.ids && filters.ids.length > 0) {
+      conditions.push(`id IN (${filters.ids.map(() => '?').join(',')})`);
+      params.push(...filters.ids);
+    }
+    if (filters.status) {
+      conditions.push('status = ?');
+      params.push(filters.status);
+    }
+    if (filters.provider) {
+      conditions.push('provider_source = ?');
+      params.push(filters.provider);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const stmt = this.db.prepare(`
+      SELECT
+        id, name, credentials, status,
+        provider_source as providerSource,
+        auth_method as authMethod,
+        region, machine_id as machineId,
+        email, subscription_level as subscriptionLevel,
+        created_at as createdAt
+      FROM accounts
+      ${where}
+      ORDER BY created_at DESC
+    `);
+
+    return params.length > 0 ? stmt.all(...params) : stmt.all();
   }
 
   // 关闭数据库连接

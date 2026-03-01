@@ -1,43 +1,103 @@
+// Kiro-Go 风格工具栏组件
 window.AccountsToolbar = function(props) {
+    const { useState, useEffect, useRef } = React;
+    const [searchQuery, setSearchQuery] = useState('');
+    const [statusFilter, setStatusFilter] = useState('all');
+    const debounceTimerRef = useRef(null);
+
+    // 处理搜索变化（带防抖）
+    const handleSearchChange = (e) => {
+        const query = e.target.value;
+        setSearchQuery(query);
+
+        // 清除之前的定时器
+        if (debounceTimerRef.current) {
+            clearTimeout(debounceTimerRef.current);
+        }
+
+        // 设置新的定时器（300ms 延迟）
+        debounceTimerRef.current = setTimeout(() => {
+            props.onFilterChange({ search: query, status: statusFilter });
+        }, 300);
+    };
+
+    // 清理定时器
+    useEffect(() => {
+        return () => {
+            if (debounceTimerRef.current) {
+                clearTimeout(debounceTimerRef.current);
+            }
+        };
+    }, []);
+
+    // 处理状态筛选变化
+    const handleStatusFilterChange = (e) => {
+        const status = e.target.value;
+        setStatusFilter(status);
+        props.onFilterChange({ search: searchQuery, status });
+    };
+
+    const selectedCount = props.selectedCount || 0;
+    const allSelected = props.allSelected || false;
+
     return (
-        <div className="flex flex-wrap items-center gap-3 mb-6">
-            <button onClick={props.onAdd} className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center">
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/>
-                </svg>
-                添加账号
-            </button>
-            <button onClick={props.onImport} className="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center">
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
-                </svg>
-                导入
-            </button>
-            <button onClick={props.onRefreshAll} className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center">
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                </svg>
-                刷新全部额度
-            </button>
-            {props.selectedCount > 0 && (
-                <button id="batchDeleteBtn" onClick={props.onBatchDelete} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center">
-                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                    </svg>
-                    批量删除 (<span id="selectedCount">{props.selectedCount}</span>)
-                </button>
-            )}
-            <select
-                id="strategy"
-                value={props.strategy}
-                onChange={(e) => props.onStrategyChange(e.target.value)}
-                className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-                <option value="round-robin">轮询策略</option>
-                <option value="random">随机策略</option>
-                <option value="least-used">最少使用</option>
-            </select>
-            <button onClick={props.onRefresh} className="border border-gray-200 hover:bg-gray-50 px-4 py-2 rounded-lg text-sm font-medium text-gray-600 transition">刷新</button>
+        <div className="toolbar-container">
+            {/* 左侧：全选 + 批量操作 */}
+            <div className="toolbar-left">
+                <label className="select-all-label">
+                    <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={props.onToggleSelectAll}
+                        className="select-all-checkbox"
+                    />
+                    <span>全选</span>
+                </label>
+
+                <div className="toolbar-divider"></div>
+
+                {/* 批量操作栏 */}
+                {selectedCount > 0 && (
+                    <div className="batch-operations">
+                        <span className="batch-count">已选 {selectedCount} 个</span>
+                        <button className="batch-btn enable" onClick={props.onBatchEnable} aria-label="批量启用选中的账号">批量启用</button>
+                        <button className="batch-btn disable" onClick={props.onBatchDisable} aria-label="批量禁用选中的账号">批量禁用</button>
+                        <button className="batch-btn refresh" onClick={props.onBatchRefresh} aria-label="批量刷新选中的账号">批量刷新</button>
+                        <button className="batch-btn delete" onClick={props.onBatchDelete} aria-label="批量删除选中的账号">批量删除</button>
+                    </div>
+                )}
+            </div>
+
+            {/* 右侧：策略 + 搜索 + 筛选 */}
+            <div className="toolbar-right">
+                <select
+                    value={props.strategy}
+                    onChange={(e) => props.onStrategyChange(e.target.value)}
+                    className="filter-select"
+                >
+                    <option value="round-robin">轮询</option>
+                    <option value="random">随机</option>
+                    <option value="least-used">最少使用</option>
+                </select>
+                <input
+                    type="text"
+                    placeholder="搜索邮箱/昵称..."
+                    value={searchQuery}
+                    onChange={handleSearchChange}
+                    className="search-input"
+                />
+                <select
+                    value={statusFilter}
+                    onChange={handleStatusFilterChange}
+                    className="filter-select"
+                >
+                    <option value="all">全部状态</option>
+                    <option value="active">活跃</option>
+                    <option value="disabled">已禁用</option>
+                    <option value="cooldown">冷却中</option>
+                    <option value="invalid">无效</option>
+                </select>
+            </div>
         </div>
     );
 };

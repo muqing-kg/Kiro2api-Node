@@ -1,8 +1,10 @@
 window.ModalsRoot = function ModalsRoot() {
     return (
         <>
-            <window.AddAccountModal />
             <window.ImportAccountsModal />
+            <window.EditAccountModal />
+            <window.ExportAccountsModal />
+            <window.AccountDetailModal />
             <window.CreateApiKeyModal />
             <window.RenameApiKeyModal />
             <window.AddModelModal />
